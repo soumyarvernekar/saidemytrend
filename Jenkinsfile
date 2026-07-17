@@ -1,24 +1,62 @@
 pipeline {
     agent any
+
     environment {
         PATH = "/opt/maven/bin:$PATH"
     }
 
     stages {
-
-        stage("build") {
+        stage("Build") {
             steps {
-                sh 'mvn clean deploy'
+                echo '---- Build started ------------------'
+                // Compiles and packages your artifact locally without double-deploying
+                sh 'mvn clean package -Dmaven.test.skip=true'
+                echo '---- Build completed ------------------'
             }
         }
 
-        stage('SonarQube analysis') {
+        stage("test") {
+            steps {
+                echo " ------Unit test started------------"
+                sh 'mvn surefire-report:report'
+                echo " ------Unit test completed------------"
+            }
+        }
+
+        stage("sonarQube analysis") {
             environment {
                 scannerHome = tool 'saidemy-sonar-scanner'
             }
             steps {
                 withSonarQubeEnv('saidemy-sonarqube-server') {
                     sh "${scannerHome}/bin/sonar-scanner"
+                }
+            }
+        }
+
+        stage("Jar Publish") {
+            steps {
+                script {
+                    echo '<-- Jar Publish Started -->'
+                    def server = Artifactory.newServer url: registry + "/artifactory", credentialsId: "artifact-cred"
+                    def properties = "buildid=${env.BUILD_ID},commitid=${GIT_COMMIT}"
+                    def uploadSpec = """{
+                        "files": [
+                            {
+                                "pattern": "jarstaging/(*)",
+                                "target": "soumya-libs-release-local/{1}",
+                                "flat": "false",
+                                "props": "${properties}",
+                                "exclusions": ["*.sha1", "*.md5"]
+                            }
+                        ]
+                    }"""
+                   
+                    def buildInfo = server.upload(uploadSpec)
+                    buildInfo.env.collect()
+                    server.publishBuildInfo(buildInfo)
+                    
+                    echo '<-- Jar Publish Ended -->'
                 }
             }
         }
